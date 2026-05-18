@@ -1,0 +1,108 @@
+version: '3.8'
+
+services:
+  # MySQL Database
+  mysql:
+    image: mysql:8.0
+    container_name: vibe_mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: vibe_db
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./database/schema.sql:/docker-entrypoint-initdb.d/schema.sql
+    networks:
+      - vibe_network
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis Cache
+  redis:
+    image: redis:7.0-alpine
+    container_name: vibe_redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - vibe_network
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Backend Service
+  backend:
+    build:
+      context: ./vibe-backend
+      dockerfile: Dockerfile
+    container_name: vibe_backend
+    environment:
+      - NODE_ENV=development
+      - DB_HOST=mysql
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+    ports:
+      - "3001:3001"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./vibe-backend/src:/app/src
+    networks:
+      - vibe_network
+    command: npm run dev
+
+  # Frontend Service
+  frontend:
+    build:
+      context: ./vibe-frontend
+      dockerfile: Dockerfile
+    container_name: vibe_frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - REACT_APP_API_URL=http://localhost:3001
+      - REACT_APP_SOCKET_URL=http://localhost:3001
+    volumes:
+      - ./vibe-frontend/src:/app/src
+    networks:
+      - vibe_network
+    depends_on:
+      - backend
+    command: npm start
+
+  # ML Service
+  ml_service:
+    build:
+      context: ./vibe-ml
+      dockerfile: Dockerfile
+    container_name: vibe_ml
+    ports:
+      - "5000:5000"
+    environment:
+      - FLASK_ENV=development
+      - FLASK_APP=app.py
+    volumes:
+      - ./vibe-ml/src:/app/src
+      - ./vibe-ml/models:/app/models
+    networks:
+      - vibe_network
+    command: python app.py
+
+volumes:
+  mysql_data:
+  redis_data:
+
+networks:
+  vibe_network:
+    driver: bridge
